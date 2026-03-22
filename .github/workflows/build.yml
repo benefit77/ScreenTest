@@ -1,0 +1,135 @@
+name: Build and Release Multi-Platform
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # --- 任务 1: 编译 Windows 7/10/11 (32位) ---
+  build-modern-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21.13' # 兼容 Win7 且包含 slices 包
+
+      - name: Set up MSYS2 (32-bit GCC)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW32
+          install: mingw-w64-i686-toolchain
+          update: true
+          path-type: inherit
+
+      - name: Build Modern Binary
+        shell: msys2 {0}
+        run: |
+          export GOTOOLCHAIN=local
+          export CGO_ENABLED=1
+          export GOOS=windows
+          export GOARCH=386
+          export CC=i686-w64-mingw32-gcc
+          # 直接下载 go.mod 锁定的版本并编译
+          go mod download
+          go build -ldflags="-s -w -H=windowsgui -extldflags=-static" -o screen-tester-win7-up.exe main.go
+
+      - name: Compress with UPX
+        shell: pwsh
+        run: |
+          choco install upx -y
+          upx --best screen-tester-win7-up.exe
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: modern-windows-bin
+          path: screen-tester-win7-up.exe
+
+  # --- 任务 2: 编译 Windows XP 专用 (32位) ---
+  build-xp:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.10.8' # XP 唯一支持版本
+
+      - name: Build XP Legacy
+        run: |
+          $env:GOOS="windows"
+          $env:GOARCH="386"
+          $env:CGO_ENABLED="0"
+          # 注意：编译 main_xp.go
+          go build -ldflags="-s -w -H=windowsgui" -o screen-tester-xp-only.exe main_xp.go
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: xp-bin
+          path: screen-tester-xp-only.exe
+
+  # --- 任务 3: 编译 Ubuntu Linux (64位) ---
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21.13'
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-dev xorg-dev libasound2-dev upx-ucl
+
+      - name: Build and Compress Linux
+        run: |
+          export GOTOOLCHAIN=local
+          go mod download
+          go build -ldflags="-s -w" -o screen-tester-linux-x64 main.go
+          upx --best screen-tester-linux-x64
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-bin
+          path: screen-tester-linux-x64
+
+  # --- 任务 4: 统一发布到 Release ---
+  release:
+    needs: [build-modern-windows, build-xp, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: "Screen Tester (Win11/10/7 & XP Support)"
+          body: |
+            ## 下载说明
+            - **Windows 7/10/11**: 请下载 `screen-tester-win7-up.exe`
+            - **Windows XP**: 请下载 `screen-tester-xp-only.exe`
+            - **Linux (Ubuntu)**: 请下载 `screen-tester-linux-x64`
+          files: |
+            modern-windows-bin/screen-tester-win7-up.exe
+            xp-bin/screen-tester-xp-only.exe
+            linux-bin/screen-tester-linux-x64
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
