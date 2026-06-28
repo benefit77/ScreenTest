@@ -1,3 +1,6 @@
+//go:build xp
+// +build xp
+
 package main
 
 import (
@@ -5,6 +8,8 @@ import (
 	"time"
 	"unsafe"
 )
+
+// 兼容 XP：此文件仅在使用 -tags xp 构建时编译
 
 var (
 	user32   = syscall.NewLazyDLL("user32.dll")
@@ -56,11 +61,14 @@ func wndProc(hwnd uintptr, msg uint32, wp, lp uintptr) uintptr {
 	case 0x0204:
 		syscall.Exit(0) // Right Click
 	case 0x000F: // WM_PAINT
+		// PAINTSTRUCT: hdc(BOOL), fErase(RECT), rcPaint(BOOL), fRestore(BOOL), fIncUpdate(BYTE[32]), rgbReserved
 		var ps struct {
-			hdc    uintptr
-			fErase uint32
-			rc     [4]int32
-			res    [32]byte
+			hdc      uintptr
+			fErase   uint32
+			rc       [4]int32
+			fRestore uint32
+			fIncUpd  uint32
+			res      [32]byte
 		}
 		hdc, _, _ := user32.NewProc("BeginPaint").Call(hwnd, uintptr(unsafe.Pointer(&ps)))
 		w, _, _ := user32.NewProc("GetSystemMetrics").Call(0)
@@ -105,13 +113,18 @@ func wndProc(hwnd uintptr, msg uint32, wp, lp uintptr) uintptr {
 }
 
 func main() {
-	// 进阶优化：开启 DPI 感知，防止 Win10 下模糊
-	shcore := syscall.NewLazyDLL("shcore.dll")
-	if shcore.Load() == nil {
-		// Process_Per_Monitor_DPI_Aware = 2
-		shcore.NewProc("SetProcessDpiAwareness").Call(2)
-	} else {
-		user32.NewProc("SetProcessDPIAware").Call()
+	// 检测 Windows 版本，XP (5.x) 不支持 DPI 感知
+	ver, _, _ := kernel32.NewProc("GetVersion").Call()
+	verMajor := byte(ver) & 0xFF
+	// Vista = 6.0, XP = 5.1, 仅 Vista 及以上启用 DPI 感知
+	if verMajor >= 6 {
+		shcore := syscall.NewLazyDLL("shcore.dll")
+		if shcore.Load() == nil {
+			// Process_Per_Monitor_DPI_Aware = 2
+			shcore.NewProc("SetProcessDpiAwareness").Call(2)
+		} else {
+			user32.NewProc("SetProcessDPIAware").Call()
+		}
 	}
 
 	inst, _, _ := kernel32.NewProc("GetModuleHandleW").Call(0)

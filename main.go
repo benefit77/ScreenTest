@@ -1,3 +1,5 @@
+//go:build !xp
+
 package main
 
 import (

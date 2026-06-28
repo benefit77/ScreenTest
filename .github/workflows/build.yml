@@ -70,8 +70,10 @@ jobs:
           $env:GOOS="windows"
           $env:GOARCH="386"
           $env:CGO_ENABLED="0"
-          # 注意：编译 main_xp.go
-          go build -ldflags="-s -w -H=windowsgui" -o screen-tester-xp-only.exe main_xp.go
+          $env:GO111MODULE="off"  # Go 1.10 不支持 modules
+          # go.mod 已设置 go 1.20，但 Go 1.10 会忽略它（非 module 模式）
+          # -tags xp 对 Go 1.10 无实际效果（不认识 //go:build），但保持与本地构建一致
+          go build -tags xp -ldflags="-s -w -H=windowsgui" -o screen-tester-xp-only.exe main_xp.go
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
