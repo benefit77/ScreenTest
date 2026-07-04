@@ -83,7 +83,7 @@ jobs:
 
   # --- 任务 3: 编译 Ubuntu Linux (64位) ---
   build-linux:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
