@@ -37,7 +37,6 @@ jobs:
           export GOOS=windows
           export GOARCH=386
           export CC=i686-w64-mingw32-gcc
-          # 直接下载 go.mod 锁定的版本并编译
           go mod download
           go build -ldflags="-s -w -H=windowsgui -extldflags=-static" -o screen-tester-win7-up.exe main.go
 
@@ -70,9 +69,7 @@ jobs:
           $env:GOOS="windows"
           $env:GOARCH="386"
           $env:CGO_ENABLED="0"
-          $env:GO111MODULE="off"  # Go 1.10 不支持 modules
-          # go.mod 已设置 go 1.20，但 Go 1.10 会忽略它（非 module 模式）
-          # -tags xp 对 Go 1.10 无实际效果（不认识 //go:build），但保持与本地构建一致
+          $env:GO111MODULE="off"
           go build -tags xp -ldflags="-s -w -H=windowsgui" -o screen-tester-xp-only.exe main_xp.go
 
       - name: Upload Artifact
@@ -81,10 +78,23 @@ jobs:
           name: xp-bin
           path: screen-tester-xp-only.exe
 
-  # --- 任务 3: 编译 Ubuntu Linux (64位) ---
+  # --- 任务 3: 编译 Ubuntu 20.04 兼容的 Linux (64位) ---
   build-linux:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:20.04                 # 使用与目标系统完全一致的 glibc 环境
     steps:
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            curl \
+            git \
+            libgl1-mesa-dev \
+            xorg-dev \
+            libasound2-dev \
+            upx-ucl
+
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -93,12 +103,7 @@ jobs:
         with:
           go-version: '1.21.13'
 
-      - name: Install Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgl1-mesa-dev xorg-dev libasound2-dev upx-ucl
-
-      - name: Build and Compress Linux
+      - name: Build and Compress Linux Binary
         run: |
           export GOTOOLCHAIN=local
           go mod download
@@ -128,7 +133,7 @@ jobs:
             ## 下载说明
             - **Windows 7/10/11**: 请下载 `screen-tester-win7-up.exe`
             - **Windows XP**: 请下载 `screen-tester-xp-only.exe`
-            - **Linux (Ubuntu)**: 请下载 `screen-tester-linux-x64`
+            - **Linux (Ubuntu 20.04+)**: 请下载 `screen-tester-linux-x64`
           files: |
             modern-windows-bin/screen-tester-win7-up.exe
             xp-bin/screen-tester-xp-only.exe
