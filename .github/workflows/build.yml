@@ -82,18 +82,20 @@ jobs:
   build-linux:
     runs-on: ubuntu-latest
     container:
-      image: ubuntu:20.04                 # 使用与目标系统完全一致的 glibc 环境
+      image: ubuntu:20.04
     steps:
       - name: Install system dependencies
         run: |
           apt-get update
           apt-get install -y --no-install-recommends \
+            ca-certificates \
             curl \
             git \
             libgl1-mesa-dev \
             xorg-dev \
             libasound2-dev \
             upx-ucl
+          update-ca-certificates
 
       - name: Checkout code
         uses: actions/checkout@v4
