@@ -5,7 +5,10 @@ package main
 
 import (
 	"fmt"
+	"io/ioutil"
 	"math"
+	"os"
+	"path/filepath"
 	"runtime"
 	"syscall"
 	"unsafe"
@@ -20,7 +23,10 @@ const (
 	holdCancelDistXP = 15   // 长按期间手指移动超过此像素则取消
 
 	modeTouchTestXP = 1  // 断触测试画布（第二个模式，彩条之后）
-	modeCountXP     = 12 // 断触测试 + 7 色 + 渐变 + 网格 + 对比度 + 彩条
+	modeCalibXP     = 12 // 触摸校准（最后一个模式）
+	modeCountXP     = 13
+
+	calibMarginXP = 50.0 // 校准十字准星离屏幕边缘的距离（像素）
 )
 
 var (
@@ -41,6 +47,16 @@ var (
 	holdActive    bool
 	holdStartTick uint32
 	holdX, holdY  int32
+
+	// 触摸校准
+	prevIdx              int
+	calibValid           bool
+	calScaleX, calOffX   float64
+	calScaleY, calOffY   float64
+	calibStep            int // 0..3 记录中，4 完成
+	calibExpX, calibExpY [4]float64
+	calibRawX, calibRawY [4]float64
+	calibJustFinished    bool // 刚完成校准的那一次松手不切页面
 
 	// 缓存屏幕尺寸（启动时计算一次）
 	screenW, screenH       int32
@@ -131,6 +147,79 @@ func invalidateBoxRange(hwnd uintptr, oldX, oldY, newX, newY int32) {
 	user32.NewProc("InvalidateRect").Call(hwnd, uintptr(unsafe.Pointer(&r)), 0)
 }
 
+// ---- 触摸校准 ----
+
+func calPoint(x, y int32) (int32, int32) {
+	if !calibValid {
+		return x, y
+	}
+	return int32(float64(x)*calScaleX + calOffX), int32(float64(y)*calScaleY + calOffY)
+}
+
+func calibTargetsXP() {
+	calibExpX[0], calibExpY[0] = calibMarginXP, float64(screenH)/2
+	calibExpX[1], calibExpY[1] = float64(screenW)-calibMarginXP, float64(screenH)/2
+	calibExpX[2], calibExpY[2] = float64(screenW)/2, calibMarginXP
+	calibExpX[3], calibExpY[3] = float64(screenW)/2, float64(screenH)-calibMarginXP
+}
+
+func finishCalibXP() {
+	dxExp := calibExpX[1] - calibExpX[0]
+	dxRep := calibRawX[1] - calibRawX[0]
+	dyExp := calibExpY[3] - calibExpY[2]
+	dyRep := calibRawY[3] - calibRawY[2]
+	if math.Abs(dxRep) < 20 || math.Abs(dyRep) < 20 {
+		// 无效（两次点得太近），重新校准
+		calibStep = 0
+		return
+	}
+	calScaleX = dxExp / dxRep
+	calOffX = calibExpX[0] - calibRawX[0]*calScaleX
+	calScaleY = dyExp / dyRep
+	calOffY = calibExpY[2] - calibRawY[2]*calScaleY
+	calibValid = true
+	calibStep = 4
+	calibJustFinished = true
+	saveCalibXP()
+}
+
+func calibPathXP() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(exe), "screentest_calib.txt")
+}
+
+func saveCalibXP() {
+	p := calibPathXP()
+	if p == "" {
+		return
+	}
+	ioutil.WriteFile(p, []byte(fmt.Sprintf("%.6f %.6f %.6f %.6f\n", calScaleX, calOffX, calScaleY, calOffY)), 0o644)
+}
+
+func loadCalibXP() {
+	p := calibPathXP()
+	if p == "" {
+		return
+	}
+	data, err := ioutil.ReadFile(p)
+	if err != nil {
+		return
+	}
+	var sx, ox, sy, oy float64
+	if _, err := fmt.Sscanf(string(data), "%f %f %f %f", &sx, &ox, &sy, &oy); err != nil {
+		return
+	}
+	// 合理性检查
+	if sx < 0.5 || sx > 2 || sy < 0.5 || sy > 2 {
+		return
+	}
+	calScaleX, calOffX, calScaleY, calOffY = sx, ox, sy, oy
+	calibValid = true
+}
+
 func wndProc(hwnd uintptr, msg uint32, wp, lp uintptr) uintptr {
 	switch msg {
 	case 0x0001: // WM_CREATE
@@ -170,8 +259,7 @@ func wndProc(hwnd uintptr, msg uint32, wp, lp uintptr) uintptr {
 			user32.NewProc("InvalidateRect").Call(hwnd, 0, 1)
 		}
 	case 0x0200: // WM_MOUSEMOVE - 只设变量，不调任何 DLL
-		mouseCurX = int32(int16(lp & 0xFFFF))
-		mouseCurY = int32(int16((lp >> 16) & 0xFFFF))
+		mouseCurX, mouseCurY = calPoint(int32(int16(lp&0xFFFF)), int32(int16((lp>>16)&0xFFFF)))
 		if isDragging {
 			// 拖动中：更新拖动框终点，让框跟随指针
 			oldX, oldY := dragEndX, dragEndY
@@ -188,8 +276,17 @@ func wndProc(hwnd uintptr, msg uint32, wp, lp uintptr) uintptr {
 			}
 		}
 	case 0x0201: // WM_LBUTTONDOWN - 只设变量
-		dragStartX = int32(int16(lp & 0xFFFF))
-		dragStartY = int32(int16((lp >> 16) & 0xFFFF))
+		rawX := int32(int16(lp & 0xFFFF))
+		rawY := int32(int16((lp >> 16) & 0xFFFF))
+		if idx == modeCalibXP && calibStep < 4 {
+			// 校准模式：记录原始坐标
+			calibRawX[calibStep], calibRawY[calibStep] = float64(rawX), float64(rawY)
+			calibStep++
+			if calibStep >= 4 {
+				finishCalibXP()
+			}
+		}
+		dragStartX, dragStartY = calPoint(rawX, rawY)
 		dragEndX, dragEndY = dragStartX, dragStartY
 		isDragging = true
 		holdActive = true
@@ -206,8 +303,7 @@ func wndProc(hwnd uintptr, msg uint32, wp, lp uintptr) uintptr {
 			user32.NewProc("KillTimer").Call(hwnd, 2)
 			dragEnded = true
 			// 记录鼠标最终位置
-			dragEndX = int32(int16(lp & 0xFFFF))
-			dragEndY = int32(int16((lp >> 16) & 0xFFFF))
+			dragEndX, dragEndY = calPoint(int32(int16(lp&0xFFFF)), int32(int16((lp>>16)&0xFFFF)))
 		}
 		return 0
 	case 0x0204:
@@ -230,6 +326,18 @@ func wndProc(hwnd uintptr, msg uint32, wp, lp uintptr) uintptr {
 					if vertSizeMm > 0 {
 						py = ti.y * screenH / (vertSizeMm * 100)
 					}
+					inCalib := idx == modeCalibXP && calibStep < 4
+					if ti.dwFlags&TOUCHEVENTF_DOWN != 0 && inCalib {
+						// 校准模式：记录原始坐标
+						calibRawX[calibStep], calibRawY[calibStep] = float64(px), float64(py)
+						calibStep++
+						if calibStep >= 4 {
+							finishCalibXP()
+						}
+					}
+					if !inCalib {
+						px, py = calPoint(px, py)
+					}
 
 					if ti.dwFlags&TOUCHEVENTF_UP != 0 {
 						isDragging = false
@@ -242,9 +350,22 @@ func wndProc(hwnd uintptr, msg uint32, wp, lp uintptr) uintptr {
 						distSq := dx*dx + dy*dy
 
 						if distSq < clickThresholdXP*clickThresholdXP && !flashing {
-							idx++
-							if idx >= modeCountXP {
-								syscall.Exit(0)
+							// 校准模式下点已用于记录校准点，不切换模式
+							if idx != modeCalibXP || calibStep >= 4 {
+								if idx == modeCalibXP && calibStep >= 4 {
+									if calibJustFinished {
+										// 完成校准的那一次松手：只显示完成提示，不切页面
+										calibJustFinished = false
+									} else {
+										// 校准完成：点击回到断触画布，方便立刻验证
+										idx = modeTouchTestXP
+									}
+								} else {
+									idx++
+									if idx >= modeCountXP {
+										syscall.Exit(0)
+									}
+								}
 							}
 						}
 					} else if ti.dwFlags&TOUCHEVENTF_DOWN != 0 {
@@ -328,6 +449,65 @@ func wndProc(hwnd uintptr, msg uint32, wp, lp uintptr) uintptr {
 			gdi32.NewProc("TextOutW").Call(hdc, 12, 12, uintptr(unsafe.Pointer(&line1[0])), uintptr(len(line1)))
 			line2, _ := syscall.UTF16FromString("Space/Right: next mode    ESC: exit")
 			gdi32.NewProc("TextOutW").Call(hdc, 12, 30, uintptr(unsafe.Pointer(&line2[0])), uintptr(len(line2)))
+		} else if idx == modeCalibXP {
+			// 触摸校准界面：深色背景 + 网格 + 十字准星
+			rect := [4]int32{0, 0, int32(w), int32(h)}
+			brush, _, _ := gdi32.NewProc("CreateSolidBrush").Call(0x001A1410)
+			user32.NewProc("FillRect").Call(hdc, uintptr(unsafe.Pointer(&rect)), brush)
+			gdi32.NewProc("DeleteObject").Call(brush)
+			gridPen, _, _ := gdi32.NewProc("CreatePen").Call(0, 1, 0x003A2E26)
+			oldPen, _, _ := gdi32.NewProc("SelectObject").Call(hdc, gridPen)
+			for i := int32(40); i < screenW; i += 40 {
+				gdi32.NewProc("MoveToEx").Call(hdc, uintptr(i), 0, 0)
+				gdi32.NewProc("LineTo").Call(hdc, uintptr(i), uintptr(screenH))
+			}
+			for i := int32(40); i < screenH; i += 40 {
+				gdi32.NewProc("MoveToEx").Call(hdc, 0, uintptr(i), 0)
+				gdi32.NewProc("LineTo").Call(hdc, uintptr(screenW), uintptr(i))
+			}
+			gdi32.NewProc("SelectObject").Call(hdc, oldPen)
+			gdi32.NewProc("DeleteObject").Call(gridPen)
+
+			calibTargetsXP()
+			if calibStep < 4 {
+				tx := int32(calibExpX[calibStep])
+				ty := int32(calibExpY[calibStep])
+				// 十字准星
+				whitePen, _, _ := gdi32.NewProc("CreatePen").Call(0, 2, 0x00FFFFFF)
+				oldPen, _, _ := gdi32.NewProc("SelectObject").Call(hdc, whitePen)
+				gdi32.NewProc("MoveToEx").Call(hdc, uintptr(tx-30), uintptr(ty), 0)
+				gdi32.NewProc("LineTo").Call(hdc, uintptr(tx+30), uintptr(ty))
+				gdi32.NewProc("MoveToEx").Call(hdc, uintptr(tx), uintptr(ty-30), 0)
+				gdi32.NewProc("LineTo").Call(hdc, uintptr(tx), uintptr(ty+30))
+				gdi32.NewProc("SelectObject").Call(hdc, oldPen)
+				gdi32.NewProc("DeleteObject").Call(whitePen)
+				cyanPen, _, _ := gdi32.NewProc("CreatePen").Call(0, 2, 0x00FFDC00)
+				oldPen, _, _ = gdi32.NewProc("SelectObject").Call(hdc, cyanPen)
+				gdi32.NewProc("Ellipse").Call(hdc, uintptr(tx-14), uintptr(ty-14), uintptr(tx+14), uintptr(ty+14))
+				gdi32.NewProc("SelectObject").Call(hdc, oldPen)
+				gdi32.NewProc("DeleteObject").Call(cyanPen)
+				labels := []string{
+					"Calibration: touch the LEFT crosshair",
+					"Calibration: touch the RIGHT crosshair",
+					"Calibration: touch the TOP crosshair",
+					"Calibration: touch the BOTTOM crosshair",
+				}
+				font, _, _ := gdi32.NewProc("GetStockObject").Call(17)
+				gdi32.NewProc("SelectObject").Call(hdc, font)
+				gdi32.NewProc("SetBkMode").Call(hdc, 1)
+				gdi32.NewProc("SetTextColor").Call(hdc, 0x00FFFFFF)
+				label, _ := syscall.UTF16FromString(labels[calibStep])
+				gdi32.NewProc("TextOutW").Call(hdc, 12, 12, uintptr(unsafe.Pointer(&label[0])), uintptr(len(label)))
+				label2, _ := syscall.UTF16FromString("Touch and release at the crosshair")
+				gdi32.NewProc("TextOutW").Call(hdc, 12, 30, uintptr(unsafe.Pointer(&label2[0])), uintptr(len(label2)))
+			} else {
+				font, _, _ := gdi32.NewProc("GetStockObject").Call(17)
+				gdi32.NewProc("SelectObject").Call(hdc, font)
+				gdi32.NewProc("SetBkMode").Call(hdc, 1)
+				gdi32.NewProc("SetTextColor").Call(hdc, 0x00FFFFFF)
+				label, _ := syscall.UTF16FromString("Calibration saved. Tap to go to the touch canvas.")
+				gdi32.NewProc("TextOutW").Call(hdc, 12, 12, uintptr(unsafe.Pointer(&label[0])), uintptr(len(label)))
+			}
 		} else {
 			// 正常模式逻辑（与普通版一致）
 			if idx == 0 { // 彩条（白/黄/青/绿/品红/红/蓝）
@@ -510,6 +690,7 @@ func main() {
 	// 锁定主线程：避免 Go 调度器在 GetMessage/DispatchMessage 之间迁移线程，
 	// 否则大量消息（如快速触摸滑动）时会触发 Go 回调机制死锁，程序卡死
 	runtime.LockOSThread()
+	loadCalibXP() // 加载触摸校准
 
 	// 检测 Windows 版本，XP (5.x) 不支持 DPI 感知
 	ver, _, _ := kernel32.NewProc("GetVersion").Call()
@@ -584,6 +765,12 @@ func main() {
 		}
 		dispatchMsg.Call(uintptr(unsafe.Pointer(&m)))
 
+		// 进入校准模式时重置校准步骤
+		if idx == modeCalibXP && prevIdx != modeCalibXP {
+			calibStep = 0
+		}
+		prevIdx = idx
+
 		// 长按 2 秒退出
 		if holdActive {
 			tick, _, _ := kernel32.NewProc("GetTickCount").Call()
@@ -599,9 +786,22 @@ func main() {
 			dy := dragEndY - dragStartY
 			distSq := dx*dx + dy*dy
 			if distSq < clickThresholdXP*clickThresholdXP && !flashing {
-				idx++
-				if idx >= modeCountXP {
-					syscall.Exit(0)
+				// 校准模式下点已用于记录校准点，不切换模式
+				if idx != modeCalibXP || calibStep >= 4 {
+					if idx == modeCalibXP && calibStep >= 4 {
+						if calibJustFinished {
+							// 完成校准的那一次松手：只显示完成提示，不切页面
+							calibJustFinished = false
+						} else {
+							// 校准完成：点击回到断触画布，方便立刻验证
+							idx = modeTouchTestXP
+						}
+					} else {
+						idx++
+						if idx >= modeCountXP {
+							syscall.Exit(0)
+						}
+					}
 				}
 			}
 			user32.NewProc("InvalidateRect").Call(hwnd, 0, 1)
