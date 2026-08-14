@@ -38,7 +38,7 @@ jobs:
           export GOARCH=386
           export CC=i686-w64-mingw32-gcc
           go mod download
-          go build -ldflags="-s -w -H=windowsgui -extldflags=-static" -o screen-tester-win7-up.exe main.go
+          go build -ldflags="-s -w -H=windowsgui -extldflags=-static" -o screen-tester-win7-up.exe main.go keepawake_windows.go
 
       - name: Compress with UPX
         shell: pwsh
@@ -113,7 +113,7 @@ jobs:
           export GOARCH=amd64
           export CGO_ENABLED=1
           go mod download
-          go build -ldflags="-s -w" -o screen-tester-linux-x64 main.go
+          go build -ldflags="-s -w" -o screen-tester-linux-x64 main.go keepawake_other.go
           upx --best screen-tester-linux-x64
 
       - name: Upload Artifact

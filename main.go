@@ -10,7 +10,6 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
-	"syscall"
 	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
@@ -31,15 +30,6 @@ const (
 
 	calibMargin = 50.0 // 校准十字准星离屏幕边缘的距离（像素）
 )
-
-var kernel32 = syscall.NewLazyDLL("kernel32.dll")
-
-// 防止系统休眠、屏幕关闭（ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED）
-const executionStateKeepAwake = 0x80000000 | 0x00000001 | 0x00000002
-
-func keepDisplayOn() {
-	kernel32.NewProc("SetThreadExecutionState").Call(uintptr(executionStateKeepAwake))
-}
 
 var keepAwakeTick time.Time
 

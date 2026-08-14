@@ -196,7 +196,7 @@ func saveCalibXP() {
 	if p == "" {
 		return
 	}
-	ioutil.WriteFile(p, []byte(fmt.Sprintf("%.6f %.6f %.6f %.6f\n", calScaleX, calOffX, calScaleY, calOffY)), 0o644)
+	ioutil.WriteFile(p, []byte(fmt.Sprintf("%.6f %.6f %.6f %.6f\n", calScaleX, calOffX, calScaleY, calOffY)), 0644)
 }
 
 func loadCalibXP() {
