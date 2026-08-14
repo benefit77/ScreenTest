@@ -258,6 +258,10 @@ func wndProc(hwnd uintptr, msg uint32, wp, lp uintptr) uintptr {
 		if holdActive {
 			user32.NewProc("InvalidateRect").Call(hwnd, 0, 1)
 		}
+		if wp == 3 {
+			// 防息屏：定期重新保持系统与屏幕唤醒
+			kernel32.NewProc("SetThreadExecutionState").Call(uintptr(0x80000000 | 0x00000001 | 0x00000002))
+		}
 	case 0x0200: // WM_MOUSEMOVE - 只设变量，不调任何 DLL
 		mouseCurX, mouseCurY = calPoint(int32(int16(lp&0xFFFF)), int32(int16((lp>>16)&0xFFFF)))
 		if isDragging {
@@ -746,6 +750,10 @@ func main() {
 	vertSizeMm = int32(vs)
 
 	hwndGlobal = hwnd
+
+	// 防息屏：运行期间防止系统休眠和屏幕关闭，并每 2 秒重新保持
+	kernel32.NewProc("SetThreadExecutionState").Call(uintptr(0x80000000 | 0x00000001 | 0x00000002))
+	user32.NewProc("SetTimer").Call(hwnd, 3, 2000, 0)
 
 	var m struct {
 		hwnd    uintptr
