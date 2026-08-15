@@ -9,7 +9,6 @@ import (
 	"math"
 	"math/rand"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
@@ -24,11 +23,7 @@ const (
 	holdExitTime   = 2 * time.Second // 长按此时间退出
 	holdCancelDist = 15.0            // 长按期间手指移动超过此像素则取消
 
-	modeTouchTest = 1  // 断触测试（第二个模式，彩条之后）
-	modeCalib     = 12 // 触摸校准（最后一个模式）
-	modeCount     = 13
-
-	calibMargin = 50.0 // 校准十字准星离屏幕边缘的距离（像素）
+	modeCount = 9
 )
 
 var keepAwakeTick time.Time
@@ -47,16 +42,6 @@ type Game struct {
 	holdActive   bool
 	holdStart    time.Time
 	holdX, holdY float32
-
-	// 触摸校准
-	prevMode             int
-	calibValid           bool
-	calScaleX, calOffX   float64
-	calScaleY, calOffY   float64
-	calibStep            int // 0..3 记录中，4 完成
-	calibExpX, calibExpY [4]float64
-	calibRawX, calibRawY [4]float64
-	calibJustFinished    bool // 刚完成校准的那一次松手不切页面
 }
 
 func (g *Game) Update() error {
@@ -72,15 +57,6 @@ func (g *Game) Update() error {
 	}
 
 	mx, my := ebiten.CursorPosition()
-	// 进入校准模式时重置校准步骤；校准模式下使用原始坐标，其他模式应用校准
-	if g.mode == modeCalib && g.prevMode != modeCalib {
-		g.calibStep = 0
-	}
-	g.prevMode = g.mode
-	if g.mode != modeCalib {
-		fx, fy := g.applyCalib(float64(mx), float64(my))
-		mx, my = int(fx), int(fy)
-	}
 
 	// ---- 鼠标拖动 ----
 	leftJustPressed := inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft)
@@ -88,9 +64,6 @@ func (g *Game) Update() error {
 	leftJustReleased := inpututil.IsMouseButtonJustReleased(ebiten.MouseButtonLeft)
 
 	if leftJustPressed {
-		if g.mode == modeCalib && g.calibStep < 4 {
-			g.recordCalibPoint(float64(mx), float64(my))
-		}
 		g.dragStartX, g.dragStartY = float32(mx), float32(my)
 		g.dragEndX, g.dragEndY = float32(mx), float32(my)
 		g.isDragging = true
@@ -108,15 +81,8 @@ func (g *Game) Update() error {
 	if len(curTouchIDs) > 0 {
 		id := curTouchIDs[0]
 		tx, ty := ebiten.TouchPosition(id)
-		if g.mode != modeCalib {
-			fx, fy := g.applyCalib(float64(tx), float64(ty))
-			tx, ty = int(fx), int(fy)
-		}
 		if !g.isDragging {
 			// 触摸按下：记录起点
-			if g.mode == modeCalib && g.calibStep < 4 {
-				g.recordCalibPoint(float64(tx), float64(ty))
-			}
 			g.dragStartX, g.dragStartY = float32(tx), float32(ty)
 			g.dragEndX, g.dragEndY = float32(tx), float32(ty)
 			g.isDragging = true
@@ -173,22 +139,9 @@ func (g *Game) Update() error {
 
 		if dist < clickThreshold && !g.flashing {
 			// 这是点击（非拖动）
-			// 校准模式下点已用于记录校准点，不切换模式
-			if g.mode != modeCalib || g.calibStep >= 4 {
-				if g.mode == modeCalib && g.calibStep >= 4 {
-					if g.calibJustFinished {
-						// 完成校准的那一次松手：只显示完成提示，不切页面
-						g.calibJustFinished = false
-					} else {
-						// 校准完成：点击回到断触画布，方便立刻验证
-						g.mode = modeTouchTest
-					}
-				} else {
-					g.mode++
-					if g.mode >= modeCount {
-						os.Exit(0)
-					}
-				}
+			g.mode++
+			if g.mode >= modeCount {
+				os.Exit(0)
 			}
 		}
 		// 如果 dist >= clickThreshold，是拖动，什么都不做
@@ -234,29 +187,14 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		for i, c := range bars {
 			vector.DrawFilledRect(screen, float32(i)*(fw/float32(len(bars))), 0, fw/float32(len(bars)), fh, c, false)
 		}
-	case modeTouchTest: // 断触测试画布
-		g.drawTouchTest(screen, w, h)
-	case 2, 3, 4, 5, 6, 7, 8:
+	case 1, 2, 3, 4, 5, 6, 7:
 		clrs := []color.NRGBA{{255, 0, 0, 255}, {0, 255, 0, 255}, {255, 255, 255, 255}, {0, 0, 0, 255}, {0, 0, 255, 255}, {255, 255, 0, 255}, {255, 0, 255, 255}}
-		screen.Fill(clrs[g.mode-2])
-	case 9: // 渐变
+		screen.Fill(clrs[g.mode-1])
+	case 8: // 渐变
 		for i := 0; i < w; i++ {
 			c := uint8(float32(i) / fw * 255)
 			vector.StrokeLine(screen, float32(i), 0, float32(i), fh, 1, color.NRGBA{c, c, c, 255}, false)
 		}
-	case 10: // 网格
-		screen.Fill(color.Black)
-		for i := 0; i <= 10; i++ {
-			vector.StrokeLine(screen, 0, float32(i)*(fh/10), fw, float32(i)*(fh/10), 1, color.NRGBA{100, 100, 100, 255}, false)
-			vector.StrokeLine(screen, float32(i)*(fw/10), 0, float32(i)*(fw/10), fh, 1, color.NRGBA{100, 100, 100, 255}, false)
-		}
-	case 11: // 对比度
-		for i := 0; i <= 10; i++ {
-			val := uint8(float32(i) / 100.0 * 255.0)
-			vector.DrawFilledRect(screen, float32(i)*(fw/11), 0, fw/11, fh, color.NRGBA{val, val, val, 255}, false)
-		}
-	case modeCalib: // 触摸校准
-		g.drawCalib(screen, w, h)
 	}
 
 	// ---- 绘制拖动框（所有模式：手指拖动时显示从按下点到当前位置的框） ----
@@ -320,136 +258,6 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	}
 }
 
-// drawTouchTest 绘制断触测试画布。
-func (g *Game) drawTouchTest(screen *ebiten.Image, w, h int) {
-	// 深色背景
-	screen.Fill(color.NRGBA{16, 20, 26, 255})
-	// 浅色网格
-	for x := 40; x < w; x += 40 {
-		vector.StrokeLine(screen, float32(x), 0, float32(x), float32(h), 1, color.NRGBA{38, 46, 58, 255}, false)
-	}
-	for y := 40; y < h; y += 40 {
-		vector.StrokeLine(screen, 0, float32(y), float32(w), float32(y), 1, color.NRGBA{38, 46, 58, 255}, false)
-	}
-	// 提示文字
-	info := "Drag on the canvas to draw a box\nSpace/Right: next mode   ESC: exit"
-	ebitenutil.DebugPrintAt(screen, info, 12, 12)
-}
-
-// ---- 触摸校准 ----
-
-func (g *Game) calibTargets(w, h int) {
-	g.calibExpX[0], g.calibExpY[0] = calibMargin, float64(h)/2
-	g.calibExpX[1], g.calibExpY[1] = float64(w)-calibMargin, float64(h)/2
-	g.calibExpX[2], g.calibExpY[2] = float64(w)/2, calibMargin
-	g.calibExpX[3], g.calibExpY[3] = float64(w)/2, float64(h)-calibMargin
-}
-
-func (g *Game) recordCalibPoint(x, y float64) {
-	g.calibRawX[g.calibStep], g.calibRawY[g.calibStep] = x, y
-	g.calibStep++
-	if g.calibStep >= 4 {
-		g.finishCalib()
-	}
-}
-
-func (g *Game) finishCalib() {
-	dxExp := g.calibExpX[1] - g.calibExpX[0]
-	dxRep := g.calibRawX[1] - g.calibRawX[0]
-	dyExp := g.calibExpY[3] - g.calibExpY[2]
-	dyRep := g.calibRawY[3] - g.calibRawY[2]
-	if math.Abs(dxRep) < 20 || math.Abs(dyRep) < 20 {
-		// 无效（两次点得太近），重新校准
-		g.calibStep = 0
-		return
-	}
-	g.calScaleX = dxExp / dxRep
-	g.calOffX = g.calibExpX[0] - g.calibRawX[0]*g.calScaleX
-	g.calScaleY = dyExp / dyRep
-	g.calOffY = g.calibExpY[2] - g.calibRawY[2]*g.calScaleY
-	g.calibValid = true
-	g.calibStep = 4
-	g.calibJustFinished = true
-	g.saveCalib()
-}
-
-func (g *Game) applyCalib(x, y float64) (float64, float64) {
-	if !g.calibValid {
-		return x, y
-	}
-	return x*g.calScaleX + g.calOffX, y*g.calScaleY + g.calOffY
-}
-
-func calibPath() string {
-	exe, err := os.Executable()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(filepath.Dir(exe), "screentest_calib.txt")
-}
-
-func (g *Game) saveCalib() {
-	p := calibPath()
-	if p == "" {
-		return
-	}
-	data := fmt.Sprintf("%.6f %.6f %.6f %.6f\n", g.calScaleX, g.calOffX, g.calScaleY, g.calOffY)
-	if err := os.WriteFile(p, []byte(data), 0o644); err != nil {
-		return
-	}
-}
-
-func (g *Game) loadCalib() {
-	p := calibPath()
-	if p == "" {
-		return
-	}
-	data, err := os.ReadFile(p)
-	if err != nil {
-		return
-	}
-	var sx, ox, sy, oy float64
-	if _, err := fmt.Sscanf(string(data), "%f %f %f %f", &sx, &ox, &sy, &oy); err != nil {
-		return
-	}
-	// 合理性检查
-	if sx < 0.5 || sx > 2 || sy < 0.5 || sy > 2 {
-		return
-	}
-	g.calScaleX, g.calOffX, g.calScaleY, g.calOffY = sx, ox, sy, oy
-	g.calibValid = true
-}
-
-func (g *Game) drawCalib(screen *ebiten.Image, w, h int) {
-	// 深色背景 + 网格
-	screen.Fill(color.NRGBA{16, 20, 26, 255})
-	for x := 40; x < w; x += 40 {
-		vector.StrokeLine(screen, float32(x), 0, float32(x), float32(h), 1, color.NRGBA{38, 46, 58, 255}, false)
-	}
-	for y := 40; y < h; y += 40 {
-		vector.StrokeLine(screen, 0, float32(y), float32(w), float32(y), 1, color.NRGBA{38, 46, 58, 255}, false)
-	}
-	g.calibTargets(w, h)
-	if g.calibStep < 4 {
-		tx, ty := g.calibExpX[g.calibStep], g.calibExpY[g.calibStep]
-		// 十字准星
-		vector.StrokeLine(screen, float32(tx-30), float32(ty), float32(tx+30), float32(ty), 2, color.White, false)
-		vector.StrokeLine(screen, float32(tx), float32(ty-30), float32(tx), float32(ty+30), 2, color.White, false)
-		vector.StrokeCircle(screen, float32(tx), float32(ty), 14, 2, color.NRGBA{0, 220, 255, 255}, false)
-		labels := []string{
-			"Calibration: touch the LEFT crosshair",
-			"Calibration: touch the RIGHT crosshair",
-			"Calibration: touch the TOP crosshair",
-			"Calibration: touch the BOTTOM crosshair",
-		}
-		ebitenutil.DebugPrintAt(screen, labels[g.calibStep], 12, 12)
-		ebitenutil.DebugPrintAt(screen, "Touch and release at the crosshair", 12, 30)
-	} else {
-		ebitenutil.DebugPrintAt(screen, "Calibration saved.", 12, 12)
-		ebitenutil.DebugPrintAt(screen, "Tap to go to the touch canvas.", 12, 30)
-	}
-}
-
 func (g *Game) Layout(ow, oh int) (int, int) { return ow, oh }
 
 func main() {
@@ -460,7 +268,6 @@ func main() {
 	// 适当降低功耗，不需要 60FPS 也可以
 	ebiten.SetVsyncEnabled(true)
 	g := &Game{}
-	g.loadCalib() // 加载触摸校准
 	keepAwakeTick = time.Now()
 	keepDisplayOn() // 防息屏
 	if err := ebiten.RunGame(g); err != nil {
