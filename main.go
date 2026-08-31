@@ -23,7 +23,7 @@ const (
 	holdExitTime   = 2 * time.Second // 长按此时间退出
 	holdCancelDist = 15.0            // 长按期间手指移动超过此像素则取消
 
-	modeCount = 9
+	modeCount = 8
 )
 
 var keepAwakeTick time.Time
@@ -182,15 +182,10 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	}
 
 	switch g.mode {
-	case 0: // 彩条
-		bars := []color.NRGBA{{255, 255, 255, 255}, {255, 255, 0, 255}, {0, 255, 255, 255}, {0, 255, 0, 255}, {255, 0, 255, 255}, {255, 0, 0, 255}, {0, 0, 255, 255}}
-		for i, c := range bars {
-			vector.DrawFilledRect(screen, float32(i)*(fw/float32(len(bars))), 0, fw/float32(len(bars)), fh, c, false)
-		}
-	case 1, 2, 3, 4, 5, 6, 7:
+	case 0, 1, 2, 3, 4, 5, 6:
 		clrs := []color.NRGBA{{255, 0, 0, 255}, {0, 255, 0, 255}, {255, 255, 255, 255}, {0, 0, 0, 255}, {0, 0, 255, 255}, {255, 255, 0, 255}, {255, 0, 255, 255}}
-		screen.Fill(clrs[g.mode-1])
-	case 8: // 渐变
+		screen.Fill(clrs[g.mode])
+	case 7: // 渐变
 		for i := 0; i < w; i++ {
 			c := uint8(float32(i) / fw * 255)
 			vector.StrokeLine(screen, float32(i), 0, float32(i), fh, 1, color.NRGBA{c, c, c, 255}, false)

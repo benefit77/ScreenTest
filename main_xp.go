@@ -19,7 +19,7 @@ const (
 	holdExitMsXP     = 2000 // 长按此毫秒数退出
 	holdCancelDistXP = 15   // 长按期间手指移动超过此像素则取消
 
-	modeCountXP = 9
+	modeCountXP = 8
 )
 
 var (
@@ -306,20 +306,13 @@ func wndProc(hwnd uintptr, msg uint32, wp, lp uintptr) uintptr {
 			gdi32.NewProc("DeleteObject").Call(brush)
 		} else {
 			// 正常模式逻辑（与普通版一致）
-			if idx == 0 { // 彩条（白/黄/青/绿/品红/红/蓝）
-				bars := []uint32{0xFFFFFF, 0x00FFFF, 0xFFFF00, 0x00FF00, 0xFF00FF, 0x0000FF, 0xFF0000}
-				for i := 0; i < len(bars); i++ {
-					r := [4]int32{int32(i * int(w) / len(bars)), 0, int32((i + 1) * int(w) / len(bars)), int32(h)}
-					brush, _, _ := gdi32.NewProc("CreateSolidBrush").Call(uintptr(bars[i]))
-					user32.NewProc("FillRect").Call(hdc, uintptr(unsafe.Pointer(&r)), brush)
-					gdi32.NewProc("DeleteObject").Call(brush)
-				}
-			} else if idx >= 1 && idx <= len(colors) {
+			switch {
+			case idx >= 0 && idx <= len(colors)-1: // 纯色
 				rect := [4]int32{0, 0, int32(w), int32(h)}
-				brush, _, _ := gdi32.NewProc("CreateSolidBrush").Call(uintptr(colors[idx-1]))
+				brush, _, _ := gdi32.NewProc("CreateSolidBrush").Call(uintptr(colors[idx]))
 				user32.NewProc("FillRect").Call(hdc, uintptr(unsafe.Pointer(&rect)), brush)
 				gdi32.NewProc("DeleteObject").Call(brush)
-			} else { // 渐变（与普通版一致）
+			case idx == len(colors): // 渐变（与普通版一致）
 				for i := 0; i < 255; i++ {
 					r := [4]int32{int32(i * int(w) / 255), 0, int32((i + 1) * int(w) / 255), int32(h)}
 					c := uint32(i | (i << 8) | (i << 16))
