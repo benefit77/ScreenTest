@@ -1,9 +1,10 @@
-<#
-  编译 Windows XP 可用的 32 位 ScreenTest_xp.exe。
+﻿<#
+  编译 Windows 通用版：32 位 exe，XP / 2003 / 7 / 10 / 11 都能运行。
 
   为什么必须这么编：
     * Go 1.11 起最低要求 Windows 7，Go 1.21 起要求 Windows 10，
-      所以 XP 版本只能用最后一个支持 XP 的 Go 1.10.8。
+      所以想兼容 XP 就只能用最后一个支持 XP 的 Go 1.10.8；
+      编出来的 exe 子系统版本是 4.0，XP 以上的系统也都接受。
     * XP 是 32 位系统，必须 GOARCH=386（默认的 amd64 在 XP 上打不开）。
     * XP 版走的是 GDI，不需要 ebiten，所以 CGO_ENABLED=0（不依赖 MSVCRT）。
 
@@ -11,11 +12,11 @@
     .\build-xp.ps1                              # 用 PATH 里的 go（必须是 1.10.x）
     .\build-xp.ps1 -GoRoot E:\toolchains\go      # 指定 Go 1.10.8 目录
     .\build-xp.ps1 -DownloadGo108                # 自动下载 Go 1.10.8 再编译
-    .\build-xp.ps1 -Output screen-tester-xp-only.exe
+    .\build-xp.ps1 -Output screen-tester-windows.exe
 #>
 param(
     [string]$GoRoot = $env:GO108_ROOT,
-    [string]$Output = 'ScreenTest_xp.exe',
+    [string]$Output = 'screen-tester-windows.exe',
     [switch]$DownloadGo108
 )
 

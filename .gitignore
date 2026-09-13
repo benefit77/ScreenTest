@@ -1,2 +1,4 @@
 .idea
 screentest_calib.txt
+.toolchains/
+screen-tester-windows.exe

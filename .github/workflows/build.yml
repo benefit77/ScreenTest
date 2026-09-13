@@ -9,52 +9,11 @@ permissions:
   contents: write
 
 jobs:
-  # --- 任务 1: 编译 Windows 7/10/11 (32位) ---
-  build-modern-windows:
-    runs-on: windows-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          # Go 1.20 是最后一个能在 Windows 7/8/Server 2012 上运行的版本，1.21 起要求 Windows 10
-          go-version: '1.20.14'
-
-      - name: Set up MSYS2 (32-bit GCC)
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW32
-          install: mingw-w64-i686-toolchain
-          update: true
-          path-type: inherit
-
-      - name: Build Modern Binary
-        shell: msys2 {0}
-        run: |
-          export GOTOOLCHAIN=local
-          export CGO_ENABLED=1
-          export GOOS=windows
-          export GOARCH=386
-          export CC=i686-w64-mingw32-gcc
-          go mod download
-          go build -ldflags="-s -w -H=windowsgui -extldflags=-static" -o screen-tester-win7-up.exe main.go keepawake_windows.go
-
-      - name: Compress with UPX
-        shell: pwsh
-        run: |
-          choco install upx -y
-          upx --best screen-tester-win7-up.exe
-
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: modern-windows-bin
-          path: screen-tester-win7-up.exe
-
-  # --- 任务 2: 编译 Windows XP 专用 (32位) ---
-  build-xp:
+  # --- 任务 1: 编译 Windows 通用版 (32 位) ---
+  # 为什么用 Go 1.10.8：Go 1.11 起最低要求 Windows 7，Go 1.21 起要求 Windows 10。
+  # 只有 Go 1.10.8 编出来的 exe 子系统版本是 4.0，XP 才肯加载；
+  # 同一个 exe 在 Win7/10/11 上通过 WoW64 照常运行，所以 Windows 只发这一个包。
+  build-windows:
     runs-on: windows-latest
     steps:
       - name: Checkout code
@@ -66,18 +25,18 @@ jobs:
           go-version: '1.10.8'
           check-latest: false
 
-      - name: Build XP Legacy
-        # Go 1.10.8 / GOARCH=386 / CGO_ENABLED=0 是 XP 的硬性要求，
-        # 脚本固定了这几个参数，并在编译后用 verify-xp-exe.ps1 校验 PE（位数、子系统版本、导入表）
-        run: pwsh -NoProfile -ExecutionPolicy Bypass -File build-xp.ps1 -Output screen-tester-xp-only.exe
+      - name: Build Windows (XP compatible)
+        # 脚本固定了 GOARCH=386 / CGO_ENABLED=0，并在编译后用 verify-xp-exe.ps1
+        # 校验 PE（位数、子系统版本、导入表），任何一项不满足都会让任务失败。
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File build-xp.ps1 -Output screen-tester-windows.exe
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: xp-bin
-          path: screen-tester-xp-only.exe
+          name: windows-bin
+          path: screen-tester-windows.exe
 
-  # --- 任务 3: 编译 Ubuntu 20.04 兼容的 Linux (64位) ---
+  # --- 任务 2: 编译 Ubuntu 20.04 兼容的 Linux (64 位) ---
   build-linux:
     runs-on: ubuntu-latest
     container:
@@ -121,9 +80,9 @@ jobs:
           name: linux-bin
           path: screen-tester-linux-x64
 
-  # --- 任务 4: 统一发布到 Release ---
+  # --- 任务 3: 统一发布到 Release ---
   release:
-    needs: [build-modern-windows, build-xp, build-linux]
+    needs: [build-windows, build-linux]
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
@@ -133,15 +92,13 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
-          name: "Screen Tester (Win11/10/7 & XP Support)"
+          name: "Screen Tester (Windows & Linux)"
           body: |
             ## 下载说明
-            - **Windows 7/10/11**: 请下载 `screen-tester-win7-up.exe`
-            - **Windows XP / 2003（32 位）**: 请下载 `screen-tester-xp-only.exe`
+            - **Windows（XP / 2003 / 7 / 10 / 11，32 位）**: 请下载 `screen-tester-windows.exe`
             - **Linux (Ubuntu 20.04+)**: 请下载 `screen-tester-linux-x64`
           files: |
-            modern-windows-bin/screen-tester-win7-up.exe
-            xp-bin/screen-tester-xp-only.exe
+            windows-bin/screen-tester-windows.exe
             linux-bin/screen-tester-linux-x64
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
