@@ -27,6 +27,17 @@ var (
 	gdi32    = syscall.NewLazyDLL("gdi32.dll")
 	kernel32 = syscall.NewLazyDLL("kernel32.dll")
 
+	// XP 兼容要点：syscall.LazyProc.Call 在 DLL 里找不到函数时会 panic，
+	// 而下面的 API 只有 Windows 7 才有，XP/Vista 的 user32.dll 里根本没有这些导出函数。
+	// 所以必须先 Find() 探测存在性，确认存在后才能调用，否则程序在 XP 上会一启动就崩溃。
+	procRegisterTouchWindow   = user32.NewProc("RegisterTouchWindow")
+	procGetTouchInputInfo     = user32.NewProc("GetTouchInputInfo")
+	procCloseTouchInputHandle = user32.NewProc("CloseTouchInputHandle")
+	touchSupported            bool
+
+	// Vista 及以上才有，XP 上同样不能直接调用
+	procSetProcessDPIAware = user32.NewProc("SetProcessDPIAware")
+
 	colors   = []uint32{0x0000FF, 0x00FF00, 0xFFFFFF, 0x000000, 0xFF0000, 0x00FFFF, 0xFF00FF}
 	idx      = 0
 	flashing = false
@@ -218,10 +229,14 @@ func wndProc(hwnd uintptr, msg uint32, wp, lp uintptr) uintptr {
 		syscall.Exit(0) // Right Click
 		return 0
 	case WM_TOUCH: // 触摸事件
+		if !touchSupported {
+			// XP 不支持 WM_TOUCH，理论上不会走到这里
+			return 0
+		}
 		numInputs := int(wp)
 		if numInputs > 0 && numInputs <= 32 {
 			// 使用预分配缓冲区，避免 make()
-			getTouch, _, _ := user32.NewProc("GetTouchInputInfo").Call(lp, uintptr(numInputs), uintptr(unsafe.Pointer(&touchBuf[0])), uintptr(unsafe.Sizeof(TOUCHINPUT{})))
+			getTouch, _, _ := procGetTouchInputInfo.Call(lp, uintptr(numInputs), uintptr(unsafe.Pointer(&touchBuf[0])), uintptr(unsafe.Sizeof(TOUCHINPUT{})))
 			if getTouch != 0 {
 				needRepaint := false
 				for i := 0; i < numInputs; i++ {
@@ -280,7 +295,7 @@ func wndProc(hwnd uintptr, msg uint32, wp, lp uintptr) uintptr {
 					user32.NewProc("InvalidateRect").Call(hwnd, 0, 1)
 				}
 			}
-			user32.NewProc("CloseTouchInputHandle").Call(lp)
+			procCloseTouchInputHandle.Call(lp)
 		}
 		return 0
 	case 0x000F: // WM_PAINT
@@ -450,11 +465,12 @@ func main() {
 	// Vista = 6.0, XP = 5.1, 从 Vista 及以上启用 DPI 感知
 	if verMajor >= 6 {
 		shcore := syscall.NewLazyDLL("shcore.dll")
-		if shcore.Load() == nil {
+		procSetProcessDpiAwareness := shcore.NewProc("SetProcessDpiAwareness")
+		if shcore.Load() == nil && procSetProcessDpiAwareness.Find() == nil {
 			// Process_Per_Monitor_DPI_Aware = 2
-			shcore.NewProc("SetProcessDpiAwareness").Call(2)
-		} else {
-			user32.NewProc("SetProcessDPIAware").Call()
+			procSetProcessDpiAwareness.Call(2)
+		} else if procSetProcessDPIAware.Find() == nil {
+			procSetProcessDPIAware.Call()
 		}
 	}
 
@@ -483,8 +499,14 @@ func main() {
 
 	hwnd, _, _ := user32.NewProc("CreateWindowExW").Call(0, uintptr(unsafe.Pointer(cls)), 0, 0x80000000|0x10000000, 0, 0, w, h, 0, 0, inst, 0)
 
-	// 注册触摸窗口（Windows 7 及以上支持）
-	user32.NewProc("RegisterTouchWindow").Call(hwnd, TWF_WANTPALM)
+	// 注册触摸窗口（Windows 7 及以上支持；XP 上这些函数不存在，探测后跳过。
+	// XP 的触摸屏/触摸板一般模拟成鼠标，走 WM_LBUTTONDOWN/WM_MOUSEMOVE 一样能用）
+	touchSupported = procRegisterTouchWindow.Find() == nil &&
+		procGetTouchInputInfo.Find() == nil &&
+		procCloseTouchInputHandle.Find() == nil
+	if touchSupported {
+		procRegisterTouchWindow.Call(hwnd, TWF_WANTPALM)
+	}
 
 	// 缓存屏幕物理尺寸（himetric->像素换算用）
 	screenW = int32(w)

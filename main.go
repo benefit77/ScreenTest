@@ -1,4 +1,5 @@
 //go:build !xp
+// +build !xp
 
 package main
 

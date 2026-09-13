@@ -19,7 +19,8 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21.13'
+          # Go 1.20 是最后一个能在 Windows 7/8/Server 2012 上运行的版本，1.21 起要求 Windows 10
+          go-version: '1.20.14'
 
       - name: Set up MSYS2 (32-bit GCC)
         uses: msys2/setup-msys2@v2
@@ -66,13 +67,9 @@ jobs:
           check-latest: false
 
       - name: Build XP Legacy
-        run: |
-          go version
-          $env:GOOS="windows"
-          $env:GOARCH="386"
-          $env:CGO_ENABLED="0"
-          $env:GO111MODULE="off"
-          go build -tags xp -ldflags="-s -w -H=windowsgui" -o screen-tester-xp-only.exe main_xp.go
+        # Go 1.10.8 / GOARCH=386 / CGO_ENABLED=0 是 XP 的硬性要求，
+        # 脚本固定了这几个参数，并在编译后用 verify-xp-exe.ps1 校验 PE（位数、子系统版本、导入表）
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File build-xp.ps1 -Output screen-tester-xp-only.exe
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -140,7 +137,7 @@ jobs:
           body: |
             ## 下载说明
             - **Windows 7/10/11**: 请下载 `screen-tester-win7-up.exe`
-            - **Windows XP**: 请下载 `screen-tester-xp-only.exe`
+            - **Windows XP / 2003（32 位）**: 请下载 `screen-tester-xp-only.exe`
             - **Linux (Ubuntu 20.04+)**: 请下载 `screen-tester-linux-x64`
           files: |
             modern-windows-bin/screen-tester-win7-up.exe
