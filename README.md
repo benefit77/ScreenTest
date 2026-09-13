@@ -59,7 +59,7 @@ bash verify-linux-bin.sh screen-tester-linux-x64
 
 也可以直接在当前的 Linux 机器上编 `bash build-linux.sh`，但产物会继承那台机器的 glibc 要求。
 
-CI 里还会把 UPX 压缩后的**最终产物**丢进 Ubuntu 14.04 容器实跑一次：能走到 X11 初始化（因无显示器而退出）
+CI 里还会把 UPX 压缩后的**最终产物**丢进 Ubuntu 12.04 容器实跑一次：能走到 X11 初始化（因无显示器而退出）
 就算通过，出现 `GLIBC_` 版本错误则失败。毕竟 UPX 之后符号表就查不了了，实跑才是最终证据。
 
 ## 操作方式（两个版本一致）
