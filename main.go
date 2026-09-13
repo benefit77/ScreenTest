@@ -29,12 +29,6 @@ const (
 
 var keepAwakeTick time.Time
 
-// 自动巡检：停留时长预设与轮播顺序
-var (
-	dwellPresets = []time.Duration{3 * time.Second, 5 * time.Second, 10 * time.Second, 30 * time.Second, 60 * time.Second, 5 * time.Minute, 10 * time.Minute}
-	orderNames   = []string{"SEQ", "RND", "PINGPONG"}
-)
-
 type Game struct {
 	mode     int
 	flashing bool
@@ -49,74 +43,6 @@ type Game struct {
 	holdActive   bool
 	holdStart    time.Time
 	holdX, holdY float32
-
-	// 自动巡检（无人值守轮播）
-	auto       bool
-	dwellIdx   int
-	orderIdx   int
-	autoDir    int
-	autoTick   time.Time
-	toastText  string
-	toastUntil time.Time
-}
-
-func (g *Game) dwell() time.Duration {
-	return dwellPresets[g.dwellIdx]
-}
-
-func dwellLabel(d time.Duration) string {
-	if d%time.Minute == 0 {
-		return fmt.Sprintf("%dm", int(d/time.Minute))
-	}
-	return fmt.Sprintf("%ds", int(d/time.Second))
-}
-
-// status 返回一行状态文字（Ebiten 内置字体只有 ASCII，所以用英文）
-func (g *Game) status() string {
-	state := "OFF"
-	if g.auto {
-		state = "ON"
-	}
-	return fmt.Sprintf("AUTO %s  %d/%d  %s  %s", state, g.mode+1, modeCount, dwellLabel(g.dwell()), orderNames[g.orderIdx])
-}
-
-func (g *Game) toast(text string, d time.Duration) {
-	g.toastText = text
-	g.toastUntil = time.Now().Add(d)
-}
-
-// next 切换下一个画面：自动巡检时循环，手动模式到最后一张则退出
-func (g *Game) next() {
-	if g.mode+1 >= modeCount {
-		if g.auto {
-			g.mode = 0
-			return
-		}
-		os.Exit(0)
-	}
-	g.mode++
-}
-
-// advanceAuto 按当前顺序规则走到下一张
-func (g *Game) advanceAuto() {
-	switch g.orderIdx {
-	case 1: // 随机
-		g.mode = rand.Intn(modeCount)
-	case 2: // 往返
-		if g.autoDir == 0 {
-			g.autoDir = 1
-		}
-		g.mode += g.autoDir
-		if g.mode >= modeCount-1 {
-			g.mode = modeCount - 1
-			g.autoDir = -1
-		} else if g.mode <= 0 {
-			g.mode = 0
-			g.autoDir = 1
-		}
-	default: // 顺序
-		g.mode = (g.mode + 1) % modeCount
-	}
 }
 
 func (g *Game) Update() error {
@@ -126,38 +52,9 @@ func (g *Game) Update() error {
 		keepDisplayOn()
 	}
 
-	// F 键：切换闪烁修复模式（与自动巡检互斥）
+	// F 键：切换闪烁修复模式
 	if inpututil.IsKeyJustPressed(ebiten.KeyF) {
 		g.flashing = !g.flashing
-		if g.flashing {
-			g.auto = false
-		}
-		g.toast(g.status(), 2500*time.Millisecond)
-	}
-
-	// A 键：自动巡检开关
-	if inpututil.IsKeyJustPressed(ebiten.KeyA) {
-		g.auto = !g.auto
-		if g.auto {
-			g.flashing = false
-			g.autoTick = time.Now()
-		}
-		g.toast(g.status(), 2500*time.Millisecond)
-	}
-
-	// S 键：切换停留时长
-	if inpututil.IsKeyJustPressed(ebiten.KeyS) {
-		g.dwellIdx = (g.dwellIdx + 1) % len(dwellPresets)
-		g.autoTick = time.Now()
-		g.toast(g.status(), 2500*time.Millisecond)
-	}
-
-	// O 键：切换轮播顺序
-	if inpututil.IsKeyJustPressed(ebiten.KeyO) {
-		g.orderIdx = (g.orderIdx + 1) % len(orderNames)
-		g.autoDir = 1
-		g.autoTick = time.Now()
-		g.toast(g.status(), 2500*time.Millisecond)
 	}
 
 	mx, my := ebiten.CursorPosition()
@@ -243,8 +140,10 @@ func (g *Game) Update() error {
 
 		if dist < clickThreshold && !g.flashing {
 			// 这是点击（非拖动）
-			g.next()
-			g.autoTick = time.Now()
+			g.mode++
+			if g.mode >= modeCount {
+				os.Exit(0)
+			}
 		}
 		// 如果 dist >= clickThreshold，是拖动，什么都不做
 	}
@@ -252,8 +151,10 @@ func (g *Game) Update() error {
 	if !g.flashing {
 		// 空格/右方向键：下一步
 		if inpututil.IsKeyJustPressed(ebiten.KeySpace) || inpututil.IsKeyJustPressed(ebiten.KeyRight) {
-			g.next()
-			g.autoTick = time.Now()
+			g.mode++
+			if g.mode >= modeCount {
+				os.Exit(0)
+			}
 		}
 		// 左方向键：上一步
 		if inpututil.IsKeyJustPressed(ebiten.KeyLeft) {
@@ -261,16 +162,6 @@ func (g *Game) Update() error {
 			if g.mode < 0 {
 				g.mode = 0
 			}
-			g.autoTick = time.Now()
-		}
-	}
-
-	// 自动巡检：到点换画面（拖动测量和长按期间暂停，避免打断测量）
-	if g.auto && !g.flashing && !g.isDragging && !g.holdActive {
-		if time.Since(g.autoTick) >= g.dwell() {
-			g.advanceAuto()
-			g.autoTick = time.Now()
-			g.toast(g.status(), 1500*time.Millisecond)
 		}
 	}
 
@@ -361,11 +252,6 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		}
 		ebitenutil.DebugPrintAt(screen, "release to cancel", int(g.holdX)-44, int(g.holdY)+48)
 	}
-
-	// ---- 状态提示（自动巡检 / 设置变更）----
-	if !g.toastUntil.IsZero() && time.Now().Before(g.toastUntil) {
-		ebitenutil.DebugPrintAt(screen, g.toastText, 12, 12)
-	}
 }
 
 func (g *Game) Layout(ow, oh int) (int, int) { return ow, oh }
@@ -377,12 +263,9 @@ func main() {
 	ebiten.SetWindowFloating(true)
 	// 适当降低功耗，不需要 60FPS 也可以
 	ebiten.SetVsyncEnabled(true)
-	// 启动即进入自动巡检：默认停留 10 分钟，按顺序循环（按 A 可以关掉）
-	g := &Game{auto: true, dwellIdx: 6}
-	g.autoTick = time.Now()
+	g := &Game{}
 	keepAwakeTick = time.Now()
 	keepDisplayOn() // 防息屏
-	g.toast(g.status(), 2500*time.Millisecond)
 	if err := ebiten.RunGame(g); err != nil {
 		log.Fatal(err)
 	}
