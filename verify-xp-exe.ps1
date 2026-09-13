@@ -7,7 +7,7 @@
     3. 静态导入了 Vista/Win7 才有的函数（XP 会提示“无法定位程序输入点”）
        只看导入表，不看文件里的字符串 —— Go 运行时代码里本身就含这些名字。
 
-  用法:  .\verify-xp-exe.ps1 -Path .\ScreenTest_xp.exe
+  用法:  .\verify-xp-exe.ps1 -Path .\screen-tester-windows.exe
 #>
 param(
     [Parameter(Mandatory = $true)]
