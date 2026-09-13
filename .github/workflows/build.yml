@@ -88,6 +88,19 @@ jobs:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
 
+      - name: Prune stale release assets
+        # Release 是覆盖式更新的，旧文件名不会自动消失，这里把不在清单里的资产删掉。
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          keep="screen-tester-windows.exe screen-tester-linux-x64"
+          gh release view latest --json assets --jq '.assets[].name' 2>/dev/null | while read -r name; do
+            if ! echo "$keep" | grep -qw "$name"; then
+              echo "removing stale asset: $name"
+              gh release delete-asset latest "$name" --yes
+            fi
+          done
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
