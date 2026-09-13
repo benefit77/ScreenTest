@@ -31,7 +31,7 @@ var keepAwakeTick time.Time
 
 // 自动巡检：停留时长预设与轮播顺序
 var (
-	dwellPresets = []time.Duration{3 * time.Second, 5 * time.Second, 10 * time.Second, 30 * time.Second, 60 * time.Second, 5 * time.Minute}
+	dwellPresets = []time.Duration{3 * time.Second, 5 * time.Second, 10 * time.Second, 30 * time.Second, 60 * time.Second, 5 * time.Minute, 10 * time.Minute}
 	orderNames   = []string{"SEQ", "RND", "PINGPONG"}
 )
 
@@ -377,9 +377,12 @@ func main() {
 	ebiten.SetWindowFloating(true)
 	// 适当降低功耗，不需要 60FPS 也可以
 	ebiten.SetVsyncEnabled(true)
-	g := &Game{dwellIdx: 2} // 默认停留 10 秒
+	// 启动即进入自动巡检：默认停留 10 分钟，按顺序循环（按 A 可以关掉）
+	g := &Game{auto: true, dwellIdx: 6}
+	g.autoTick = time.Now()
 	keepAwakeTick = time.Now()
 	keepDisplayOn() // 防息屏
+	g.toast(g.status(), 2500*time.Millisecond)
 	if err := ebiten.RunGame(g); err != nil {
 		log.Fatal(err)
 	}

@@ -73,7 +73,7 @@ var (
 
 // 自动巡检：停留时长预设（毫秒）与轮播顺序
 var (
-	dwellMsXP    = [6]uint32{3000, 5000, 10000, 30000, 60000, 300000}
+	dwellMsXP    = [7]uint32{3000, 5000, 10000, 30000, 60000, 300000, 600000}
 	orderNamesXP = [3]string{"SEQ", "RND", "PINGPONG"}
 )
 
@@ -580,7 +580,8 @@ func main() {
 	// 自动巡检的随机顺序需要一个种子（Go 1.10 的默认种子是固定的）
 	tick0, _, _ := kernel32.NewProc("GetTickCount").Call()
 	rand.Seed(int64(uint32(tick0)))
-	dwellIdxXP = 2 // 默认停留 10 秒
+	dwellIdxXP = 6  // 默认停留 10 分钟
+	autoMode = true // 启动即自动轮询（按 A 可以关掉）
 
 	// 检测 Windows 版本，XP (5.x) 不支持 DPI 感知
 	ver, _, _ := kernel32.NewProc("GetVersion").Call()
@@ -647,6 +648,10 @@ func main() {
 	// 防息屏：运行期间防止系统休眠和屏幕关闭，并每 2 秒重新保持
 	kernel32.NewProc("SetThreadExecutionState").Call(uintptr(0x80000000 | 0x00000001 | 0x00000002))
 	user32.NewProc("SetTimer").Call(hwnd, 3, 2000, 0)
+
+	// 自动巡检定时器：启动即开启，按 A 可以关掉
+	user32.NewProc("SetTimer").Call(hwnd, 4, uintptr(dwellMsXP[dwellIdxXP]), 0)
+	showToastXP(2500)
 
 	var m struct {
 		hwnd    uintptr
