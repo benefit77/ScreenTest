@@ -73,6 +73,34 @@ jobs:
           sudo apt-get install -y -qq upx-ucl
           upx --best screen-tester-linux-x64
 
+      - name: Smoke test on Ubuntu 14.04 (glibc 2.19)
+        # UPX 之后 section header 没了，readelf 查不了符号版本，所以直接拿最终产物实跑：
+        # 只要它能在 2014 年的发行版里加载起来（走到 X11 初始化、因为没显示器而报错），
+        # 就说明 glibc 兼容性没问题。出现 GLIBC_ 版本错误则直接失败。
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src ubuntu:14.04 bash -c '
+            set -e
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get -o Acquire::Check-Valid-Until=false update -qq
+            apt-get install -y -qq --no-install-recommends --allow-unauthenticated \
+              libx11-6 libgl1-mesa-glx libasound2 >/dev/null
+            chmod +x ./screen-tester-linux-x64
+            set +e
+            timeout 20 ./screen-tester-linux-x64 > smoke.log 2>&1
+            echo "退出码: $?"
+            cat smoke.log
+            set -e
+            if grep -q "GLIBC_" smoke.log; then
+              echo "[FAIL] 产物要求的 glibc 高于 Ubuntu 14.04"
+              exit 1
+            fi
+            if ! grep -qiE "X11|Xauthority|display" smoke.log; then
+              echo "[FAIL] 没走到 X11 初始化，产物可能没正常运行"
+              exit 1
+            fi
+            echo "[OK] 在 Ubuntu 14.04 上能正常加载并启动"
+          '
+
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
