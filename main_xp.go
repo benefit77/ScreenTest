@@ -6,6 +6,7 @@ package main
 import (
 	"fmt"
 	"math"
+	"math/rand"
 	"runtime"
 	"syscall"
 	"unsafe"
@@ -60,7 +61,69 @@ var (
 	mouseCurX, mouseCurY int32
 	dragEnded            bool
 	hwndGlobal           uintptr
+
+	// 自动巡检（无人值守轮播）
+	autoMode     bool
+	dwellIdxXP   int
+	orderIdxXP   int
+	autoDirXP    int32
+	toastUntilXP uint32
+	toastText    string
 )
+
+// 自动巡检：停留时长预设（毫秒）与轮播顺序
+var (
+	dwellMsXP    = [6]uint32{3000, 5000, 10000, 30000, 60000, 300000}
+	orderNamesXP = [3]string{"SEQ", "RND", "PINGPONG"}
+)
+
+func dwellLabelXP() string {
+	ms := dwellMsXP[dwellIdxXP]
+	if ms%60000 == 0 {
+		return fmt.Sprintf("%dm", ms/60000)
+	}
+	return fmt.Sprintf("%ds", ms/1000)
+}
+
+func autoStatusXP() string {
+	state := "OFF"
+	if autoMode {
+		state = "ON"
+	}
+	return fmt.Sprintf("AUTO %s  %d/%d  %s  %s", state, idx+1, modeCountXP, dwellLabelXP(), orderNamesXP[orderIdxXP])
+}
+
+// showToastXP 显示状态提示，ms 为持续时间
+func showToastXP(ms uint32) {
+	tick, _, _ := kernel32.NewProc("GetTickCount").Call()
+	toastText = autoStatusXP()
+	toastUntilXP = uint32(tick) + ms
+	// 定时器 5 只负责在提示到期后触发一次重绘，把提示擦掉
+	user32.NewProc("KillTimer").Call(hwndGlobal, 5)
+	user32.NewProc("SetTimer").Call(hwndGlobal, 5, uintptr(ms+60), 0)
+}
+
+// advanceAutoXP 按当前顺序规则走到下一张
+func advanceAutoXP() {
+	switch orderIdxXP {
+	case 1: // 随机
+		idx = rand.Intn(modeCountXP)
+	case 2: // 往返
+		if autoDirXP == 0 {
+			autoDirXP = 1
+		}
+		idx += int(autoDirXP)
+		if idx >= modeCountXP-1 {
+			idx = modeCountXP - 1
+			autoDirXP = -1
+		} else if idx <= 0 {
+			idx = 0
+			autoDirXP = 1
+		}
+	default: // 顺序
+		idx = (idx + 1) % modeCountXP
+	}
+}
 
 // Windows Touch 相关常量
 const (
@@ -151,17 +214,45 @@ func wndProc(hwnd uintptr, msg uint32, wp, lp uintptr) uintptr {
 		return 0
 	case 0x0100: // WM_KEYDOWN
 		switch wp {
-		case 0x46: // F 键 - 开启/关闭闪烁
+		case 0x46: // F 键 - 开启/关闭闪烁（与自动巡检互斥）
 			flashing = !flashing
 			if flashing {
+				autoMode = false
+				user32.NewProc("KillTimer").Call(hwnd, 4)
 				user32.NewProc("SetTimer").Call(hwnd, 1, 30, 0)
 			} else {
 				user32.NewProc("KillTimer").Call(hwnd, 1)
 			}
+			showToastXP(2500)
+		case 0x41: // A 键 - 自动巡检开关
+			autoMode = !autoMode
+			if autoMode {
+				flashing = false
+				user32.NewProc("KillTimer").Call(hwnd, 1)
+				user32.NewProc("SetTimer").Call(hwnd, 4, uintptr(dwellMsXP[dwellIdxXP]), 0)
+			} else {
+				user32.NewProc("KillTimer").Call(hwnd, 4)
+			}
+			showToastXP(2500)
+		case 0x53: // S 键 - 切换停留时长
+			dwellIdxXP = (dwellIdxXP + 1) % len(dwellMsXP)
+			if autoMode {
+				user32.NewProc("KillTimer").Call(hwnd, 4)
+				user32.NewProc("SetTimer").Call(hwnd, 4, uintptr(dwellMsXP[dwellIdxXP]), 0)
+			}
+			showToastXP(2500)
+		case 0x4F: // O 键 - 切换轮播顺序
+			orderIdxXP = (orderIdxXP + 1) % len(orderNamesXP)
+			autoDirXP = 1
+			showToastXP(2500)
 		case 0x27, 0x20, 0x0D: // Right, Space, Enter
 			idx++
 			if idx >= modeCountXP {
-				syscall.Exit(0)
+				if autoMode {
+					idx = 0
+				} else {
+					syscall.Exit(0)
+				}
 			}
 		case 0x25: // Left
 			idx--
@@ -182,6 +273,17 @@ func wndProc(hwnd uintptr, msg uint32, wp, lp uintptr) uintptr {
 		if wp == 3 {
 			// 防息屏：定期重新保持系统与屏幕唤醒
 			kernel32.NewProc("SetThreadExecutionState").Call(uintptr(0x80000000 | 0x00000001 | 0x00000002))
+		}
+		if wp == 4 && autoMode && !isDragging && !holdActive {
+			// 自动巡检：到点换画面（拖动测量和长按期间暂停，避免打断测量）
+			advanceAutoXP()
+			showToastXP(1500)
+			user32.NewProc("InvalidateRect").Call(hwnd, 0, 1)
+		}
+		if wp == 5 {
+			// 提示到期：停掉定时器并重绘，把提示擦掉
+			user32.NewProc("KillTimer").Call(hwnd, 5)
+			user32.NewProc("InvalidateRect").Call(hwnd, 0, 1)
 		}
 	case 0x0200: // WM_MOUSEMOVE - 只设变量，不调任何 DLL
 		mouseCurX = int32(int16(lp & 0xFFFF))
@@ -447,6 +549,22 @@ func wndProc(hwnd uintptr, msg uint32, wp, lp uintptr) uintptr {
 			gdi32.NewProc("TextOutW").Call(hdc, uintptr(holdX-44), uintptr(holdY+44), uintptr(unsafe.Pointer(&hint[0])), uintptr(len(hint)))
 		}
 
+		// ---- 状态提示（自动巡检 / 设置变更）----
+		tick, _, _ := kernel32.NewProc("GetTickCount").Call()
+		if toastText != "" && int32(uint32(tick)-toastUntilXP) < 0 {
+			// 深色底 + 白字，避免在纯白画面上看不见
+			box := [4]int32{8, 8, int32(24 + 7*len(toastText)), 34}
+			bg, _, _ := gdi32.NewProc("CreateSolidBrush").Call(0x00202020)
+			user32.NewProc("FillRect").Call(hdc, uintptr(unsafe.Pointer(&box)), bg)
+			gdi32.NewProc("DeleteObject").Call(bg)
+			font, _, _ := gdi32.NewProc("GetStockObject").Call(17) // DEFAULT_GUI_FONT
+			gdi32.NewProc("SelectObject").Call(hdc, font)
+			gdi32.NewProc("SetBkMode").Call(hdc, 1) // TRANSPARENT
+			gdi32.NewProc("SetTextColor").Call(hdc, 0x00FFFFFF)
+			label, _ := syscall.UTF16FromString(toastText)
+			gdi32.NewProc("TextOutW").Call(hdc, 12, 12, uintptr(unsafe.Pointer(&label[0])), uintptr(len(label)))
+		}
+
 		user32.NewProc("EndPaint").Call(hwnd, uintptr(unsafe.Pointer(&ps)))
 		return 0
 	}
@@ -458,6 +576,11 @@ func main() {
 	// 锁定主线程：避免 Go 调度器在 GetMessage/DispatchMessage 之间迁移线程，
 	// 否则大量消息（如快速触摸滑动）时会触发 Go 回调机制死锁，程序卡死
 	runtime.LockOSThread()
+
+	// 自动巡检的随机顺序需要一个种子（Go 1.10 的默认种子是固定的）
+	tick0, _, _ := kernel32.NewProc("GetTickCount").Call()
+	rand.Seed(int64(uint32(tick0)))
+	dwellIdxXP = 2 // 默认停留 10 秒
 
 	// 检测 Windows 版本，XP (5.x) 不支持 DPI 感知
 	ver, _, _ := kernel32.NewProc("GetVersion").Call()
@@ -560,7 +683,11 @@ func main() {
 			if distSq < clickThresholdXP*clickThresholdXP && !flashing {
 				idx++
 				if idx >= modeCountXP {
-					syscall.Exit(0)
+					if autoMode {
+						idx = 0
+					} else {
+						syscall.Exit(0)
+					}
 				}
 			}
 			user32.NewProc("InvalidateRect").Call(hwnd, 0, 1)
