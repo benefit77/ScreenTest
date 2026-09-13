@@ -1,0 +1,86 @@
+name: glibc probe
+
+# 临时任务：探测各老发行版能否编译，以及产物要求的 glibc 版本。用完即删。
+on:
+  push:
+    paths:
+      - '.github/workflows/glibc-probe.yml'
+      - 'probe/**'
+
+permissions:
+  contents: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Prepare Go toolchain and module cache
+        run: |
+          set -e
+          curl -fsSL -o /tmp/go.tgz https://go.dev/dl/go1.21.13.linux-amd64.tar.gz
+          tar -C /tmp -xzf /tmp/go.tgz
+          mkdir -p /tmp/gopath
+          GOTOOLCHAIN=local GOPATH=/tmp/gopath /tmp/go/bin/go version
+          GOTOOLCHAIN=local GOPATH=/tmp/gopath /tmp/go/bin/go mod download
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq binutils
+
+      - name: Probe old distros
+        run: |
+          set -u
+          mkdir -p probe-out
+          cd "$GITHUB_WORKSPACE"
+
+          run_case() {
+            image="$1"; label="$2"; script="$3"
+            echo "=== $label ($image) ==="
+            docker run --rm \
+              -v "$PWD:/src" \
+              -v /tmp/go:/usr/local/go:ro \
+              -v /tmp/gopath:/gopath \
+              -e PROBE_LABEL="$label" \
+              -e GOTOOLCHAIN=local \
+              -e GOPATH=/gopath \
+              -e CGO_ENABLED=1 \
+              -e GOOS=linux \
+              -e GOARCH=amd64 \
+              -w /src "$image" bash "/src/probe/$script" > "probe-out/$label.log" 2>&1 || true
+
+            {
+              echo "image: $image"
+              echo "container: $(docker run --rm "$image" sh -c 'cat /etc/os-release | head -2 | tr "\n" " "')"
+              echo "container_glibc: $(docker run --rm "$image" ldd --version | head -1)"
+              if [ -f "probe-out/$label.bin" ]; then
+                echo "build: ok"
+                echo "max_glibc_symbol: $(readelf --version-info "probe-out/$label.bin" | grep -oE 'GLIBC_[0-9.]+' | sort -Vu | tail -1)"
+                echo "needed: $(readelf -d "probe-out/$label.bin" | awk '/NEEDED/{gsub(/[\[\]]/,"",$NF); print $NF}' | tr '\n' ' ')"
+                echo "size: $(stat -c %s "probe-out/$label.bin")"
+              else
+                echo "build: FAILED"
+                echo "tail:"
+                tail -n 15 "probe-out/$label.log" | sed 's/^/  /'
+              fi
+            } > "probe-out/$label.txt"
+            cat "probe-out/$label.txt"
+          }
+
+          run_case ubuntu:14.04  ubuntu1404 apt-ubuntu.sh
+          run_case ubuntu:16.04  ubuntu1604 apt-ubuntu.sh
+          run_case ubuntu:18.04  ubuntu1804 apt-ubuntu.sh
+          run_case debian:9      debian9    apt-debian.sh
+          run_case centos:7      centos7    yum-centos.sh
+
+      - name: Commit results
+        if: always()
+        run: |
+          set -e
+          rm -f probe-out/*.bin
+          cat probe-out/*.txt
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add -A probe-out
+          git commit -m "glibc probe results [skip ci]" || true
+          git push
