@@ -1,7 +1,0 @@
-image: ubuntu:16.04
-container: NAME="Ubuntu" VERSION="16.04.7 LTS (Xenial Xerus)" 
-container_glibc: ldd (Ubuntu GLIBC 2.23-0ubuntu11.3) 2.23
-build: ok
-max_glibc_symbol: GLIBC_2.14
-needed: libresolv.so.2 libX11.so.6 libm.so.6 libdl.so.2 librt.so.1 libpthread.so.0 libc.so.6 
-size: 7232520

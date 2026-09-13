@@ -36,42 +36,41 @@ jobs:
           name: windows-bin
           path: screen-tester-windows.exe
 
-  # --- 任务 2: 编译 Ubuntu 20.04 兼容的 Linux (64 位) ---
+  # --- 任务 2: 编译 Linux (64 位) ---
+  # 关键点：在 ubuntu:16.04 容器里编译，而不是直接在 runner 上编。
+  # 产物要求的 glibc 版本由编译环境决定，用老环境编出来的能跑的发行版更多：
+  # 同样一份代码，在 20.04 里编要求 GLIBC_2.31，在 16.04 里编只要求 GLIBC_2.14。
+  # （不要在 job 上用 container:，老镜像里的 glibc 跑不动 runner 注入的 node。）
   build-linux:
     runs-on: ubuntu-latest
-    container:
-      image: ubuntu:20.04
     steps:
-      - name: Install system dependencies
-        run: |
-          apt-get update
-          apt-get install -y --no-install-recommends \
-            ca-certificates \
-            curl \
-            git \
-            build-essential \
-            libgl1-mesa-dev \
-            xorg-dev \
-            libasound2-dev \
-            upx-ucl
-          update-ca-certificates
-
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.21.13'
-
-      - name: Build and Compress Linux Binary
+      - name: Prepare Go toolchain
         run: |
-          export GOTOOLCHAIN=local
-          export GOOS=linux
-          export GOARCH=amd64
-          export CGO_ENABLED=1
-          go mod download
-          go build -ldflags="-s -w" -o screen-tester-linux-x64 main.go keepawake_other.go
+          curl -fsSL -o /tmp/go.tgz https://go.dev/dl/go1.21.13.linux-amd64.tar.gz
+          tar -C /tmp -xzf /tmp/go.tgz
+          mkdir -p /tmp/gopath
+          GOTOOLCHAIN=local GOPATH=/tmp/gopath /tmp/go/bin/go version
+
+      - name: Build in glibc 2.23 container (Ubuntu 16.04)
+        run: |
+          docker run --rm \
+            -v "$PWD:/src" \
+            -v /tmp/go:/usr/local/go:ro \
+            -v /tmp/gopath:/gopath \
+            -e GOTOOLCHAIN=local -e GOPATH=/gopath \
+            -e CGO_ENABLED=1 -e GOOS=linux -e GOARCH=amd64 \
+            -w /src ubuntu:16.04 bash /src/build-linux.sh
+
+      - name: Verify glibc baseline
+        run: bash verify-linux-bin.sh screen-tester-linux-x64
+
+      - name: Compress with UPX
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq upx-ucl
           upx --best screen-tester-linux-x64
 
       - name: Upload Artifact
@@ -110,7 +109,7 @@ jobs:
           body: |
             ## 下载说明
             - **Windows（XP / 2003 / 7 / 10 / 11，32 位）**: 请下载 `screen-tester-windows.exe`
-            - **Linux (Ubuntu 20.04+)**: 请下载 `screen-tester-linux-x64`
+            - **Linux（Ubuntu 12.04+ / Debian 8+ / CentOS 7+ 等，64 位）**: 请下载 `screen-tester-linux-x64`
           files: |
             windows-bin/screen-tester-windows.exe
             linux-bin/screen-tester-linux-x64

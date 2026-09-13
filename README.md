@@ -7,13 +7,18 @@
 | 文件 | 适用系统 | 编译方式 |
 | --- | --- | --- |
 | screen-tester-windows.exe | Windows XP / 2003 / 7 / 10 / 11（32 位） | 纯 Win32 GDI，无 ebiten，Go 1.10.8，见 workflow 的 `build-windows` |
-| screen-tester-linux-x64 | Linux / Ubuntu 20.04+（64 位） | ebiten + cgo，Go 1.21，见 workflow 的 `build-linux` |
+| screen-tester-linux-x64 | Linux（Ubuntu 12.04+ / Debian 8+ / CentOS 7+ / RHEL 7+，64 位） | ebiten + cgo，Go 1.21，在 ubuntu:16.04 容器里编译，见 workflow 的 `build-linux` |
 
 Windows 版从 XP 到 Windows 11 通用：产物是 32 位 PE32、子系统版本 4.0，64 位系统通过 WoW64 直接运行；
 只调用 user32 / gdi32 / kernel32 里的老 API，Win7 才有的触摸接口会先探测存在性再调用，XP 上自动退化成鼠标。
 
 Linux 版是 ebiten 实现（`main.go` + `keepawake_other.go`）。ebiten 依赖较新的图形接口，XP 上跑不起来，
 所以 Windows 版不用它，两套源码靠 `//go:build xp` 标签分开。
+
+Linux 产物最高只要求 **glibc 2.14**，动态依赖只有 `libX11.so.6`、`libm`、`libdl`、`librt`、`libpthread`、`libc`
+（OpenGL 和 ALSA 是运行时 dlopen 加载的，需要机器上有 libGL 驱动；无桌面环境跑不起来）。
+这个下限不是"在 18.04 上编"得来的，而是在更老的 ubuntu:16.04 容器里编出来的：
+同样一份代码在 20.04 里编要 GLIBC_2.31，在 18.04 里编要 GLIBC_2.27，在 16.04 里编只要 GLIBC_2.14。
 
 ## 编译 Windows 版（= XP 兼容版）
 
@@ -39,10 +44,20 @@ Linux 版是 ebiten 实现（`main.go` + `keepawake_other.go`）。ebiten 依赖
 ## 编译 Linux 版
 
 ```bash
-sudo apt-get install -y build-essential libgl1-mesa-dev xorg-dev libasound2-dev
-GOTOOLCHAIN=local CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
-  go build -ldflags="-s -w" -o screen-tester-linux-x64 main.go keepawake_other.go
+# 用 Go 1.21 工具链 + ubuntu:16.04 容器编译（CI 就是这么干的）
+curl -fsSL -o /tmp/go.tgz https://go.dev/dl/go1.21.13.linux-amd64.tar.gz
+tar -C /tmp -xzf /tmp/go.tgz
+mkdir -p /tmp/gopath
+docker run --rm -v "$PWD:/src" -v /tmp/go:/usr/local/go:ro -v /tmp/gopath:/gopath \
+  -e GOTOOLCHAIN=local -e GOPATH=/gopath \
+  -e CGO_ENABLED=1 -e GOOS=linux -e GOARCH=amd64 \
+  -w /src ubuntu:16.04 bash /src/build-linux.sh
+
+# 检查产物的 glibc 下限于不高于 2.14（超过会返回非 0）
+bash verify-linux-bin.sh screen-tester-linux-x64
 ```
+
+也可以直接在当前的 Linux 机器上编 `bash build-linux.sh`，但产物会继承那台机器的 glibc 要求。
 
 ## 操作方式（两个版本一致）
 

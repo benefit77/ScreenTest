@@ -1,7 +1,0 @@
-image: debian:9
-container: PRETTY_NAME="Debian GNU/Linux 9 (stretch)" NAME="Debian GNU/Linux" 
-container_glibc: ldd (Debian GLIBC 2.24-11+deb9u4) 2.24
-build: ok
-max_glibc_symbol: GLIBC_2.14
-needed: libresolv.so.2 libX11.so.6 libXrandr.so.2 libXxf86vm.so.1 libXi.so.6 libXcursor.so.1 libm.so.6 libXinerama.so.1 libdl.so.2 librt.so.1 libpthread.so.0 libc.so.6 
-size: 7232448
