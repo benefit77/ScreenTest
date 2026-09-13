@@ -1,0 +1,20 @@
+image: ubuntu:14.04
+container: NAME="Ubuntu" VERSION="14.04.6 LTS, Trusty Tahr" 
+container_glibc: ldd (Ubuntu EGLIBC 2.19-0ubuntu6.15) 2.19
+build: FAILED
+tail:
+  x11_init_linbsd.c:377:17: error: 'for' loop initial declarations are only allowed in C99 mode
+                   for (int j = 0;  j < sizeof(keymap) / sizeof(keymap[0]);  j++)
+                   ^
+  x11_init_linbsd.c: In function 'hasUsableInputMethodStyle':
+  x11_init_linbsd.c:432:5: error: 'for' loop initial declarations are only allowed in C99 mode
+       for (unsigned int i = 0;  i < styles->count_styles;  i++)
+       ^
+  x11_init_linbsd.c: In function 'getAtomIfSupported':
+  x11_init_linbsd.c:453:5: error: 'for' loop initial declarations are only allowed in C99 mode
+       for (unsigned long i = 0;  i < atomCount;  i++)
+       ^
+  x11_init_linbsd.c: In function 'createEmptyEventPipe':
+  x11_init_linbsd.c:1006:5: error: 'for' loop initial declarations are only allowed in C99 mode
+       for (int i = 0; i < 2; i++)
+       ^
